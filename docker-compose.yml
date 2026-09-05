@@ -1,0 +1,20 @@
+# SnapCRM runs as its OWN isolated container. It does not touch the food/transport
+# stacks. It talks to SQL Server (host) for its own CRM DB and a read-only login for
+# the food DB. Secrets come from the .env file (never commit it).
+services:
+  app:
+    image: ghcr.io/fnlogist/snapcrm:latest
+    build: .
+    restart: unless-stopped
+    network_mode: host        # reach SQL Server on the host at localhost:1433
+    environment:
+      ASPNETCORE_HTTP_PORTS: "8090"
+      TZ: "Europe/Vienna"
+      ConnectionStrings__CrmDb: "${CRM_DB}"
+      ConnectionStrings__FoodDbReadOnly: "${FOOD_DB_READONLY}"
+      Crm__SendingEnabled: "${SENDING_ENABLED:-false}"
+      Crm__UnsubscribeSecret: "${UNSUBSCRIBE_SECRET}"
+      Crm__PublicBaseUrl: "${PUBLIC_BASE_URL:-https://crm.snap-food.eu}"
+      Email__Brevo__ApiKey: "${BREVO_API_KEY}"
+      Email__Brevo__WebhookSecret: "${BREVO_WEBHOOK_SECRET}"
+      Email__FromEmail: "${FROM_EMAIL:-hallo@snap-food.eu}"

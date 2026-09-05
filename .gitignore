@@ -1,0 +1,14 @@
+# Secrets — NEVER commit
+.env
+**/appsettings.json
+**/appsettings.*.json
+!**/appsettings.example.json
+
+# .NET build output
+bin/
+obj/
+*.user
+
+# IDE
+.vs/
+.idea/

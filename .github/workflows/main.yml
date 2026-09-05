@@ -1,0 +1,73 @@
+name: Deploy SnapCRM
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  APP_NAME: "snap-crm"
+  IMAGE_NAME: "ghcr.io/${{ secrets.GIT_DOCKER_USER }}/snapcrm"
+  GIT_USER: ${{ secrets.GIT_DOCKER_USER }}
+  GIT_TOKEN: ${{ secrets.GIT_DOCKER_TOKEN }}
+  SERVER_KEY: ${{ secrets.SERVER_KEY }}
+  SERVER_IP: ${{ secrets.SERVER_IP }}
+  SERVER_USER: ${{ secrets.SERVER_USER }}
+  SERVER_PORT: ${{ secrets.SERVER_PORT }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ env.GIT_USER }}
+        password: ${{ env.GIT_TOKEN }}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: ${{ env.IMAGE_NAME }}:latest
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Inject image into docker-compose
+      run: |
+        sed -i "0,/image:.*/{s|image:.*|image: ${{ env.IMAGE_NAME }}:latest|}" docker-compose.yml
+
+    - name: Deploy via SSH
+      uses: easingthemes/ssh-deploy@v5.1.0
+      with:
+        SSH_PRIVATE_KEY: ${{ env.SERVER_KEY }}
+        REMOTE_HOST: ${{ env.SERVER_IP }}
+        REMOTE_USER: ${{ env.SERVER_USER }}
+        REMOTE_PORT: ${{ env.SERVER_PORT }}
+        SOURCE: "docker-compose.yml"
+        TARGET: "./${{ env.APP_NAME }}/"
+        SCRIPT_AFTER_REQUIRED: true
+        SCRIPT_AFTER: |
+          set -euo pipefail
+          cd ${{ env.APP_NAME }}
+          echo ${{ env.GIT_TOKEN }} | docker login ghcr.io -u ${{ env.GIT_USER }} --password-stdin
+          # .env must already exist here (created once, by hand). Never overwrite it.
+          if [ ! -f .env ]; then echo "MISSING .env in $(pwd) — create it first"; exit 1; fi
+          docker compose pull app
+          docker compose up -d --force-recreate app
+          docker image prune -f || true
+          docker ps --format 'table {{.Names}}\t{{.Status}}' | grep -i snapcrm || true
