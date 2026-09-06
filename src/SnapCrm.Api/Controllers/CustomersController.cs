@@ -2,13 +2,19 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SnapCrm.Api.Data;
 using SnapCrm.Api.Domain;
+using SnapCrm.Api.Services.Sync;
 
 namespace SnapCrm.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class CustomersController(SnapCrmDbContext db) : ControllerBase
+public class CustomersController(SnapCrmDbContext db, SyncService sync) : ControllerBase
 {
+    /// <summary>Run the read-only sync from the food DB now (for testing / on-demand refresh).</summary>
+    [HttpPost("sync")]
+    public async Task<IActionResult> Sync(CancellationToken ct)
+        => Ok(new { upserted = await sync.RunAsync(ct) });
+
     [HttpGet("stats")]
     public async Task<IActionResult> Stats(CancellationToken ct)
     {

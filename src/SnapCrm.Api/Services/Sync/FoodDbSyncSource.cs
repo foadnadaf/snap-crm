@@ -21,14 +21,16 @@ public class FoodDbSyncSource(IConfiguration config, ILogger<FoodDbSyncSource> l
     {
         // Read-only aggregate. LEFT JOIN so customers with zero orders are still synced.
         // `changedSince` limits the scan to recently-active users for incremental syncs.
+        // Matches the real food DB schema: Users has no PLZ/City (address lives in a
+        // separate table), phone is MobileNumber, and Orders.CustomerId links to Users.Id.
         const string sql = @"
 SELECT
     CONVERT(varchar(50), u.Id)               AS SourceUserId,
     u.Email                                  AS Email,
-    u.PhoneNumber                            AS Phone,
+    u.MobileNumber                           AS Phone,
     u.FirstName                              AS FirstName,
-    u.PostalCode                             AS Plz,
-    u.City                                   AS City,
+    CAST(NULL AS nvarchar(20))               AS Plz,
+    CAST(NULL AS nvarchar(100))              AS City,
     u.DateTime                               AS RegisteredAt,
     COALESCE(o.OrderCount, 0)                AS OrderCount,
     COALESCE(o.TotalSpent, 0)                AS TotalSpent,
@@ -37,15 +39,16 @@ SELECT
 FROM Users u
 OUTER APPLY (
     SELECT
-        COUNT(*)        AS OrderCount,
-        SUM(od.Total)   AS TotalSpent,
+        COUNT(*)         AS OrderCount,
+        SUM(od.Total)    AS TotalSpent,
         MIN(od.DateTime) AS FirstOrderAt,
         MAX(od.DateTime) AS LastOrderAt
     FROM Orders od
-    WHERE od.UserId = u.Id
-      AND od.Status >= 0
+    WHERE od.CustomerId = u.Id
+      AND od.IsDeleted = 0
 ) o
-WHERE (@changedSince IS NULL OR u.UpdateDateTime >= @changedSince OR o.LastOrderAt >= @changedSince);";
+WHERE (u.IsDeleted = 0)
+  AND (@changedSince IS NULL OR u.UpdateDateTime >= @changedSince OR o.LastOrderAt >= @changedSince);";
 
         await using var conn = new SqlConnection(_cs);
         // ApplicationIntent=ReadOnly is respected by AlwaysOn replicas; harmless otherwise.

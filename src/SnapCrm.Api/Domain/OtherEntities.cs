@@ -45,6 +45,13 @@ public class Campaign
     /// <summary>Routine campaigns from a pre-approved recurring plan can skip re-approval.</summary>
     public bool IsRoutinePreApproved { get; set; }
 
+    /// <summary>
+    /// A double-opt-in "confirm your subscription" campaign. It targets customers who are
+    /// NOT yet opted-in (so it bypasses the normal consent gate) and its body carries a
+    /// {{confirm_url}} that opts the recipient IN when clicked.
+    /// </summary>
+    public bool IsRepermission { get; set; }
+
     public DateTime? ScheduledAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? SentAt { get; set; }

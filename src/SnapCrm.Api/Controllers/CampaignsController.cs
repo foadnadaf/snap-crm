@@ -54,4 +54,39 @@ public class CampaignsController(SnapCrmDbContext db, CampaignService campaigns,
     [HttpPost("{id:int}/send-batch")]
     public async Task<IActionResult> Send(int id, CancellationToken ct) =>
         Ok(new { sent = await campaigns.SendApprovedAsync(id, ct) });
+
+    /// <summary>
+    /// Create the double-opt-in "confirm your subscription" campaign, freeze its audience
+    /// (everyone undecided), and drop it into the approval queue. Nothing sends until you
+    /// approve it AND Crm:SendingEnabled is true.
+    /// </summary>
+    [HttpPost("repermission")]
+    public async Task<IActionResult> CreateRepermission(CancellationToken ct)
+    {
+        var c = new Campaign
+        {
+            Name = "Double opt-in – Anmeldung bestätigen",
+            Subject = "Möchtest du SnapFood-Angebote erhalten? 🍔",
+            HtmlBody = RepermissionBody,
+            IsRepermission = true,
+            CreatedBy = CreatedBy.Human,
+            Status = CampaignStatus.Draft
+        };
+        db.Campaigns.Add(c);
+        await db.SaveChangesAsync(ct);
+
+        var recipients = await campaigns.BuildRecipientsAsync(c.Id, ct);
+        var needsHuman = await approvals.SubmitAsync(c.Id, $"[Re-permission] Anmelde-Bestätigung an {recipients} Kontakte.", ct);
+        return Ok(new { c.Id, recipients, needsHumanApproval = needsHuman });
+    }
+
+    private const string RepermissionBody = @"
+<div style=""font-family:Arial,sans-serif;max-width:600px;margin:auto"">
+  <h2 style=""color:#e11d2a"">Möchtest du SnapFood-Angebote erhalten?</h2>
+  <p>Hallo! Wir möchten dir gerne exklusive Angebote und Neuigkeiten von SnapFood per E-Mail schicken.</p>
+  <p>Bitte bestätige mit einem Klick, dass du diese E-Mails erhalten möchtest:</p>
+  <p><a href=""{{confirm_url}}"" style=""background:#e11d2a;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;display:inline-block"">Ja, ich bin dabei</a></p>
+  <hr style=""border:none;border-top:1px solid #eee;margin:24px 0"">
+  <p style=""font-size:12px;color:#888"">Wenn du keine E-Mails möchtest, ignoriere diese Nachricht einfach – oder <a href=""{{unsubscribe_url}}"">hier dauerhaft abmelden</a>.</p>
+</div>";
 }

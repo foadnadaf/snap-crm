@@ -24,7 +24,9 @@ public class CampaignService(
     private int BatchSize => config.GetValue("Crm:MaxEmailsPerRunBatch", 200);
     private int HourFrom => config.GetValue("Crm:AllowedSendHoursLocal:From", 8);
     private int HourTo => config.GetValue("Crm:AllowedSendHoursLocal:To", 20);
-    private string BaseUrl => config["Crm:PublicBaseUrl"] ?? "https://crm.snap-food.eu";
+    private string BaseUrl => config["Crm:PublicBaseUrl"] ?? "https://crm.snap-food.at";
+
+    private record CustomerRef(string SourceUserId, string Email);
 
     /// <summary>Freeze the current segment membership into CampaignRecipient rows.</summary>
     public async Task<int> BuildRecipientsAsync(int campaignId, CancellationToken ct = default)
@@ -32,14 +34,29 @@ public class CampaignService(
         var campaign = await db.Campaigns.Include(c => c.Segment)
             .FirstOrDefaultAsync(c => c.Id == campaignId, ct)
             ?? throw new InvalidOperationException("Campaign not found.");
-        if (campaign.Segment == null) throw new InvalidOperationException("Campaign has no segment.");
 
         // Clear any previous materialisation.
         await db.CampaignRecipients.Where(r => r.CampaignId == campaignId).ExecuteDeleteAsync(ct);
 
-        var people = await segments.Resolve(campaign.Segment) // already email-marketable-only
-            .Select(c => new { c.SourceUserId, c.Email })
-            .ToListAsync(ct);
+        List<CustomerRef> people;
+        if (campaign.IsRepermission)
+        {
+            // Double-opt-in ask: everyone with an email who has NOT yet decided
+            // (Unknown consent), never opted out, and not hard-bounced.
+            people = await db.Customers
+                .Where(c => c.Email != null && c.Email != ""
+                            && c.EmailConsent == ConsentStatus.Unknown
+                            && !c.EmailHardBounced)
+                .Select(c => new CustomerRef(c.SourceUserId, c.Email!))
+                .ToListAsync(ct);
+        }
+        else
+        {
+            if (campaign.Segment == null) throw new InvalidOperationException("Campaign has no segment.");
+            people = await segments.Resolve(campaign.Segment) // already email-marketable-only
+                .Select(c => new CustomerRef(c.SourceUserId, c.Email!))
+                .ToListAsync(ct);
+        }
 
         foreach (var p in people)
         {
@@ -98,19 +115,25 @@ public class CampaignService(
         {
             ct.ThrowIfCancellationRequested();
 
-            // Re-check consent at send time (belt & suspenders).
-            var stillOk = await db.Customers.AnyAsync(c =>
-                c.SourceUserId == r.SourceUserId &&
-                c.EmailConsent == ConsentStatus.OptedIn && !c.EmailHardBounced, ct);
-            if (!stillOk)
+            // Re-check consent at send time (belt & suspenders). For a re-permission ask we
+            // require only that the recipient has NOT opted out / bounced; for any normal
+            // campaign we require an explicit opt-in.
+            var okToSend = campaign.IsRepermission
+                ? await db.Customers.AnyAsync(c => c.SourceUserId == r.SourceUserId &&
+                      c.EmailConsent != ConsentStatus.OptedOut && !c.EmailHardBounced, ct)
+                : await db.Customers.AnyAsync(c => c.SourceUserId == r.SourceUserId &&
+                      c.EmailConsent == ConsentStatus.OptedIn && !c.EmailHardBounced, ct);
+            if (!okToSend)
             {
                 r.Status = RecipientStatus.Suppressed;
-                r.SuppressReason = "no-consent-at-send";
+                r.SuppressReason = campaign.IsRepermission ? "opted-out-or-bounced" : "no-consent-at-send";
                 continue;
             }
 
             var unsubUrl = $"{BaseUrl}/unsubscribe?t={unsubscribe.Create(r.Email)}";
-            var body = campaign.HtmlBody.Replace("{{unsubscribe_url}}", unsubUrl);
+            var body = campaign.HtmlBody
+                .Replace("{{unsubscribe_url}}", unsubUrl)
+                .Replace("{{confirm_url}}", $"{BaseUrl}/confirm?t={unsubscribe.Create(r.Email)}");
 
             var result = await email.SendAsync(new OutgoingEmail(
                 r.Email, null, campaign.Subject, body, unsubUrl,
