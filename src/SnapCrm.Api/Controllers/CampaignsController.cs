@@ -80,6 +80,11 @@ public class CampaignsController(SnapCrmDbContext db, CampaignService campaigns,
         return Ok(new { c.Id, recipients, needsHumanApproval = needsHuman });
     }
 
+    /// <summary>Send the re-permission email to ONE address (test before the mass send).</summary>
+    [HttpPost("test")]
+    public async Task<IActionResult> Test([FromQuery] string email, CancellationToken ct) =>
+        Ok(await campaigns.SendOneAsync(email, "TEST – SnapFood: Anmeldung bestätigen", RepermissionBody, ct));
+
     private const string RepermissionBody = @"
 <div style=""font-family:Arial,sans-serif;max-width:600px;margin:auto"">
   <h2 style=""color:#e11d2a"">Möchtest du SnapFood-Angebote erhalten?</h2>

@@ -28,6 +28,20 @@ public class CampaignService(
 
     private record CustomerRef(string SourceUserId, string Email);
 
+    /// <summary>
+    /// Send a single email to one address for testing (bypasses campaigns/segments) —
+    /// still honours the master kill-switch. Fills {{confirm_url}} and {{unsubscribe_url}}.
+    /// </summary>
+    public async Task<object> SendOneAsync(string toEmail, string subject, string html, CancellationToken ct = default)
+    {
+        if (!SendingEnabled) return new { sent = false, reason = "sending-disabled (Crm:SendingEnabled=false)" };
+        var confirm = $"{BaseUrl}/confirm?t={unsubscribe.Create(toEmail)}";
+        var unsub = $"{BaseUrl}/unsubscribe?t={unsubscribe.Create(toEmail)}";
+        var body = html.Replace("{{confirm_url}}", confirm).Replace("{{unsubscribe_url}}", unsub);
+        var r = await email.SendAsync(new OutgoingEmail(toEmail, null, subject, body, unsub), ct);
+        return new { sent = r.Success, messageId = r.ProviderMessageId, error = r.Error };
+    }
+
     /// <summary>Freeze the current segment membership into CampaignRecipient rows.</summary>
     public async Task<int> BuildRecipientsAsync(int campaignId, CancellationToken ct = default)
     {
